@@ -1,0 +1,60 @@
+#!/usr/bin/env Rscript
+library("DESeq2")
+library("dplyr")
+
+####################### Data #######################
+all.counts <- readRDS("/Users/tim.baker/Documents/loyola/FatFlies_scRNA/docker_run_20190425/zUMIs_output/expression/dnpf_scrna_run.dgecounts.rds")
+
+# cell data supplied from SampleSheet.csv at beginning of pipeline
+cell.data <- read.csv("/Users/tim.baker/Documents/loyola/FatFlies_scRNA/cell_data.csv", header=TRUE, sep=",")
+cell.data$col_name <- paste(cell.data$gfp_state, cell.data$condition, cell.data$cell_id, sep=".")
+rownames(cell.data) <- cell.data$col_name
+cell.data$comb_condition <- paste(cell.data$condition, cell.data$gfp_state, sep=".")
+
+# making count tables
+umi.count <- as.matrix(all.counts$umicount$inex$all)
+read.count <- as.matrix(all.counts$readcount$inex$all)
+
+umi.count <- umi.count[,cell.data$barcode_sequence]
+colnames(umi.count) <- cell.data[["col_name"]]
+
+read.count <- read.count[,cell.data$barcode_sequence]
+colnames(read.count) <- cell.data[["col_name"]]
+
+# removing to save space
+rm(all.counts)
+
+# subsetting data all the way down testing group
+cell.data <- cell.data %>% dplyr::filter(gfp_state=='pos')
+cell.data <- as.data.frame(cell.data)
+rownames(cell.data) <- cell.data$col_name
+
+# vector of column names to subset the matrix
+exp.names <- cell.data$col_name
+exp.group <- cell.data$condition
+
+# subsetting the matrix
+umi.count <- umi.count[,exp.names]
+read.count <- read.count[,exp.names]
+
+umi.keep <- rowSums(cpm(umi.count) > 1) >= 4
+umi.count <- umi.count[umi.keep,]
+
+read.keep <- rowSums(cpm(read.count) > 1) >= 4
+read.count <- read.count[read.keep,]
+
+umi.dds <- DESeq2::DESeqDataSetFromMatrix(countData = umi.count, colData = cell.data, design = ~ condition)
+umi.dds <- DESeq2::DESeq(umi.dds)
+umi.res <- DESeq2::results(umi.dds, alpha=0.08)
+umi.resOrdered <- umi.res[order(umi.res$padj),]
+umi.resSig <- subset(umi.resOrdered, padj < 0.08)
+umi.resSig[,order("padj")]
+write.csv(as.data.frame(umi.resSig), 
+          file="umi_sig_deg_deseq2.csv")
+read.dds <- DESeq2::DESeqDataSetFromMatrix(countData = read.count, colData = cell.data, design = ~ condition)
+read.dds <- DESeq2::DESeq(read.dds)
+read.res <- DESeq2::results(read.dds, alpha=0.08)
+read.resOrdered <- read.res[order(read.res$padj),]
+read.resSig <- subset(read.resOrdered, padj < 0.08)
+write.csv(as.data.frame(read.resSig), 
+          file="read_sig_deg_deseq2.csv")
